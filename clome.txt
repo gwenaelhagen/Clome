@@ -1,0 +1,71 @@
+@echo off
+
+setlocal
+
+set cur_path=%~dp0
+
+set remoteName={0}
+set developLocalBranchName={1}
+set localRepoFolder="{2}"
+set localPRRepoFolder="{3}"
+set featureName={4}
+set forkName={5}
+set forkUrl={6}
+set remote_url_file="{7}"
+set develop_file="{8}"
+set feature_file="{9}"
+set sha1_file="{10}"
+
+set datetimef=%date:~10%%date:~4,2%%date:~7,2%%time:~0,2%%time:~3%
+set datetimef=%datetimef: =_%
+set datetimef=%datetimef::=_%
+set datetimef=%datetimef:.=_%
+set pr=pr-%datetimef%
+
+cd %localRepoFolder%
+git remote -v show -n %remoteName% | sed -n "2p" | cut -d " " -f 5 > remote_url_file
+set remoteUrl=<remote_url_file
+rm remote_url_file
+git remote add -t %featureName% %pr% %forkUrl%
+git fetch %remoteName% %developLocalBranchName%
+git fetch %pr% %featureName%
+
+git rev-list --first-parent %remoteName%/%developLocalBranchName% > develop_file
+git rev-list --first-parent %pr%/%featureName% > feature_file
+diff --old-line-format='' --new-line-format='' develop_file feature_file | head -1 > sha1_file
+set /p sha1=<sha1_file
+
+REM => sha1 or nothing (%remoteName%/%developLocalBranchName% must be taken as the sha1 then)
+git log %sha1%..%remoteName%/%developLocalBranchName% --pretty=oneline | wc -l > develop_file
+git log %sha1%..%pr%/%featureName% --pretty=oneline | wc -l > feature_file
+git remote remove %pr%
+set /p depth_develop=<develop_file
+set /p depth_feature=<feature_file
+rm develop_file
+rm feature_file
+rm sha1_file
+
+REM trim left
+for /f "tokens=* delims= " %%a in ("%depth_develop%") do set depth_develop=%%a
+if %depth_develop% EQU 0 set depth_develop=1
+
+for /f "tokens=* delims= " %%a in ("%depth_feature%") do set depth_feature=%%a
+if %depth_feature% EQU 0 set depth_feature=1
+
+REM take the highest for depth
+if %depth_develop% GTR %depth_feature% (
+    set depth=%depth_develop% 
+) else (
+    set depth=%depth_feature%
+)
+
+git clone --origin remoteName --depth=%depth_develop% --verbose --progress --reference %localRepoFolder% --single-branch --branch %developLocalBranchName% %remoteUrl% %localPRRepoFolder%
+cd %localPRRepoFolder%
+git remote add -t %featureName% %forkName% %forkUrl%
+git remote set-branches --add %forkName% %featureName%
+git fetch %forkName% %featureName%
+git merge --no-ff %forkName%/%featureName%
+
+cd %cur_path%
+
+endlocal
